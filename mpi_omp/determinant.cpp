@@ -1,91 +1,94 @@
+#include <mpi.h>
 #include <stdio.h>
 #include <iostream>
 #include <ctime>
-#include <mpi.h>
-#include <omp.h>
 
-using namespace std;
+int ProcNum = 0; // The number of the available processes
+int ProcRank = 0; // The rank of the current process
 
-void main(int argc, char** argv)
-{
-    MPI_Init(&argc,&argv);
-    srand(time(0));
-    int n = 10;
-    int needPrint = 0;
-    cin>>n>>needPrint;
-    double **a = new double*[n];
-    double **b = new double*[n];
-    for (int i=0; i<n; i++){
-        a[i] = new double[n];
-        b[i] = new double[n];
-    }
-
-    for(int i=0;i<n;i++)
-    {
-        for(int j=0;j<n;j++)
-        {
-            a[i][j]=-30+rand()%61;
-            b[i][j] = a[i][j];
+// Function for random initialization of the matrix and the vector elements
+void RandomDataInitialization(double* pMatrix, double* pVector, int Size) {
+    int i, j; // Loop variables
+    srand(unsigned(time(0)));
+    for (i=0; i<Size; i++) {
+        pVector[i] = rand()/double(1000);
+        for (j=0; j<Size; j++) {
+            if (j <= i)
+                pMatrix[i*Size+j] = rand()/double(1000); 
+            else
+                pMatrix[i*Size+j] = 0;
         }
     }
-    if(needPrint)
-        for (int i=0; i<n; i++)
-        {
-            for (int j=0; j<n; j++)
-                printf("%f   ",a[i][j]);
-            printf("\n");
-        }
+} 
 
-        double timeLin = -MPI_Wtime();
-        //Прямой ход-исключение переменных
-        for(int k=0;k<n;k++)//цикл по матрицам
-        {
-            for(int m=k+1;m<n;m++)
-            {
-                double left = a[m][k];
-                for(int j=k;j<n;j++)
-                    a[m][j]=a[m][j]-left*a[k][j]/a[k][k];
+// Function for memory allocation and data initialization
+void ProcessInitialization(double* &pMatrix, double* &pVector, double* &pResult, double* &pProcRows, double* &pProcVector, double* &pProcResult, int &Size, int &RowNum){  
+    if (ProcRank == 0) {
+        do {
+            printf("\nEnter the size of the matrix and the vector: ");
+            scanf("%d", &Size);
+            if (Size < ProcNum) {
+                printf ("Size must be greater than number of processes! \n");
             }
+        } while (Size < ProcNum);
+    }
+    MPI_Bcast(&Size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    int RestRows = Size;
+    for (int i=0; i<ProcRank; i++)
+        RestRows = RestRows-RestRows/(ProcNum-i);
+    RowNum = RestRows/(ProcNum-ProcRank);
+    pProcRows = new double [RowNum*Size];
+    pProcVector = new double [RowNum];
+    pProcResult = new double [RowNum];
+    if (ProcRank == 0) {
+        pMatrix = new double [Size*Size];
+        pVector = new double [Size];
+        pResult = new double [Size];
+    } 
+    //Initialization of the matrix and the vector elements
+    RandomDataInitialization (pMatrix, pVector, Size); 
+} 
+
+void PrintMatrix(double *pMatrix, int Size1, int Size2){
+    for (int i=0; i<Size1; i++) {
+        for (int j=0; j<Size2; j++) {
+            std::cout<<pMatrix[i*Size2+j]<<"\t"; 
         }
-        timeLin += MPI_Wtime();
-
-        double timePar = -MPI_Wtime();
-        //Прямой ход-исключение переменных
-#pragma omp parallel
-        for(int k=0;k<n;k++)//цикл по матрицам
-        {
-            #pragma omp for
-            for(int m=k+1;m<n;m++)
-            {
-                double left = a[m][k];
-                for(int j=k;j<n;j++)
-                    b[m][j]=b[m][j]-left*b[k][j]/b[k][k];
-            }
-        }
-        timePar += MPI_Wtime();
-
-
-
-        printf("%f  %f\n",timeLin,timePar);
-        if(needPrint)
-            for (int i=0; i<n; i++)
-            {
-                for (int j=0; j<n; j++)
-                    printf("%f   ",a[i][j]);
-                printf("\n");
-            }
-            MPI_Finalize();
-            system("pause");
+        std::cout<<std::endl;
+    }
 }
 
-/*
-printf("\n Korni:\n\n");
-
-printf("\n\n");
-for (i=0; i<n; i++)
-{
-for (j=0; j<n; j++)
-printf("%f   ",a[i][j]);
-printf("%f   \n",b[i]);
+void PrintVector(double *pMatrix, int Size){
+    for (int i=0; i<Size; i++) {
+        std::cout<<pMatrix[i]<<"\t"; 
+    }
+    std::cout<<std::endl;
 }
-*/
+
+void main(int argc, char* argv[]) {
+    double* pMatrix; // The matrix of the linear system
+    double* pVector; // The right parts of the linear system
+    double* pResult; // The result vector
+    double *pProcRows; // The Rows of matrix A on the process
+    double *pProcVector; // The Elements of vector b on the process
+    double *pProcResult; // The Elements of vector x on the process
+    int Size; // The Sizes of the initial matrix and vector
+    int RowNum; // The Number of the matrix rows on the current
+    // process
+    double Start, Finish, Duration; 
+    setvbuf(stdout, 0, _IONBF, 0);
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &ProcNum);
+    MPI_Comm_rank(MPI_COMM_WORLD, &ProcRank);
+    if (ProcRank == 0)
+        printf("Parallel Gauss algorithm for solving linear systems\n"); 
+    ProcessInitialization(pMatrix, pVector, pResult, pProcRows, pProcVector,
+        pProcResult, Size, RowNum);
+    if (ProcRank == 0) {
+        printf("Initial matrix \n");
+        PrintMatrix(pMatrix, Size, Size);
+        printf("Initial vector \n");
+        PrintVector(pVector, Size);
+    } 
+    MPI_Finalize();
+} 
