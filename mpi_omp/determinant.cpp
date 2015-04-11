@@ -20,6 +20,7 @@ void RandomDataInitialization(double* pMatrix, double* pVector, int Size) {
         for (j=0; j<Size; j++) {
             if (j <= i)
                 pMatrix[i*Size+j] = rand()/double(1000); 
+                //pMatrix[i*Size+j] = 1; 
             else
                 pMatrix[i*Size+j] = 0;
         }
@@ -169,6 +170,8 @@ void ParallelGaussianElimination(double* pProcRows, double* pProcVector,int Size
     // The iterations of the Gaussian elimination
     for (int i=0; i<Size; i++) {
         // Calculating the local pivot row
+        MaxValue = 0;
+        PivotPos = -1;
         for (int j=0; j<RowNum; j++) {
             if ((pProcPivotIter[j] == -1) &&
                 (MaxValue < fabs(pProcRows[j*Size+i]))) {
@@ -251,7 +254,10 @@ void main(int argc, char* argv[]) {
     //Distributing the initial data between the processes
     DataDistribution(pMatrix, pProcRows, pVector, pProcVector, Size, RowNum); 
     //TestDistribution(pMatrix, pVector, pProcRows, pProcVector, Size, RowNum);
-
+    if (ProcRank == 0) {
+        printf("Initial matrix \n");
+        PrintMatrix(pMatrix, Size, Size);
+    }
     ParallelResultCalculation (pProcRows, pProcVector, pProcResult, Size,RowNum);
     TestDistribution(pMatrix, pVector, pProcRows, pProcVector, Size, RowNum); 
 
@@ -263,4 +269,5 @@ void main(int argc, char* argv[]) {
     } 
     ProcessTermination (pMatrix, pVector, pResult, pProcRows, pProcVector,pProcResult); 
     MPI_Finalize();
+    //system("pause");
 } 
