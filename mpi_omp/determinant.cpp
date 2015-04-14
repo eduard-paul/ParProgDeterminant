@@ -3,13 +3,15 @@
 #include <iostream>
 #include <ctime>
 
+const double EPS = 0.00001;
+
 int ProcNum = 0; // The number of the available processes
 int ProcRank = 0; // The rank of the current process
 int* pProcInd;
 int* pProcNum; 
 int *pParallelPivotPos; // The number of rows selected as the pivot ones
 int *pProcPivotIter; // The number of iterations, at which the processor
-                     // rows were used as the pivot ones 
+// rows were used as the pivot ones 
 
 // Function for random initialization of the matrix and the vector elements
 void RandomDataInitialization(double* pMatrix, double* pVector, int Size) {
@@ -20,7 +22,7 @@ void RandomDataInitialization(double* pMatrix, double* pVector, int Size) {
         for (j=0; j<Size; j++) {
             if (j <= i)
                 pMatrix[i*Size+j] = rand()/double(1000); 
-                //pMatrix[i*Size+j] = 1; 
+            //pMatrix[i*Size+j] = 1; 
             else
                 pMatrix[i*Size+j] = 0;
         }
@@ -31,8 +33,8 @@ void RandomDataInitialization(double* pMatrix, double* pVector, int Size) {
 void ProcessInitialization(double* &pMatrix, double* &pVector, double* &pResult, double* &pProcRows, double* &pProcVector, double* &pProcResult, int &Size, int &RowNum){  
     if (ProcRank == 0) {
         do {
-            printf("\nEnter the size of the matrix and the vector: ");
-            scanf("%d", &Size);
+            /*printf("\nEnter the size of the matrix and the vector: ");
+            scanf("%d", &Size);*/
             if (Size < ProcNum) {
                 printf ("Size must be greater than number of processes! \n");
             }
@@ -109,7 +111,7 @@ void DataDistribution(double* pMatrix, double* pProcRows, double* pVector, doubl
     MPI_Scatterv(pVector, pProcNum, pProcInd, MPI_DOUBLE, pProcVector,
         pProcNum[ProcRank], MPI_DOUBLE, 0, MPI_COMM_WORLD); 
 } 
- 
+
 void PrintMatrix(double *pMatrix, int Size1, int Size2){
     for (int i=0; i<Size1; i++) {
         for (int j=0; j<Size2; j++) {
@@ -148,10 +150,10 @@ void TestDistribution(double* pMatrix, double* pVector, double* pProcRows,double
 
 // Fuction for column elimination
 void ParallelEliminateColumns(double* pProcRows, double* pProcVector, double* pPivotRow, int Size, int RowNum, int Iter) {
-    double PivotFactor;
+    //#pragma omp parallel for
     for (int i=0; i<RowNum; i++) {
         if (pProcPivotIter[i] == -1) {
-            PivotFactor = pProcRows[i*Size+Iter] / pPivotRow[Iter];
+            double PivotFactor = pProcRows[i*Size+Iter] / pPivotRow[Iter];
             for (int j=Iter; j<Size; j++) {
                 pProcRows[i*Size + j] -= PivotFactor* pPivotRow[j];
             }
@@ -208,8 +210,6 @@ void ParallelGaussianElimination(double* pProcRows, double* pProcVector,int Size
     delete [] pPivotRow; 
 } 
 
-
-
 // Function for the execution of the parallel Gauss algorithm
 void ParallelResultCalculation(double* pProcRows, double* pProcVector,double* pProcResult, int Size, int RowNum) {
     // Memory allocation
@@ -227,11 +227,49 @@ void ParallelResultCalculation(double* pProcRows, double* pProcVector,double* pP
 } 
 
 // Function for gathering the result vector
-void ResultCollection(double* pProcResult, double* pResult) {
-    //TODO: Collect matrix
+void ResultCollection(double* pMatrix, double* pProcRows, int Size, int RowNum) {
+    int *pSendNum; // The number of the elements sent to the process
+    int *pSendInd; // The index of the first data element sent
+    // to the process
+    int RestRows=Size; // The number of rows, that have not been
+    // distributed yet
+    int i; // Loop variable
+    // Alloc memory for temporary objects
+    pSendInd = new int [ProcNum];
+    pSendNum = new int [ProcNum];
+    // Define the disposition of the matrix rows for the current process
+    RowNum = (Size/ProcNum);
+    pSendNum[0] = RowNum*Size;
+    pSendInd[0] = 0;
+    for (i=1; i<ProcNum; i++) {
+        RestRows -= RowNum;
+        RowNum = RestRows/(ProcNum-i);
+        pSendNum[i] = RowNum*Size;
+        pSendInd[i] = pSendInd[i-1]+pSendNum[i-1];
+    }
+    // Scatter the rows
+    MPI_Gatherv(pProcRows,pSendNum[ProcRank],MPI_DOUBLE,pMatrix,
+        pSendNum,pSendInd,MPI_DOUBLE,0,MPI_COMM_WORLD);
+    // Free the memory
+    delete [] pSendNum;
+    delete [] pSendInd; 
 } 
 
-void main(int argc, char* argv[]) {
+double DeterminantCalculation(double *pMatrix, int Size){
+    double result = 1;
+#pragma omp parallel for reduction(*:result)
+    for(int i = 0; i<Size; i++){
+        for(int j=0;i<Size;j++){
+            if (fabs(pMatrix[i*Size+j])>EPS){
+                result *= pMatrix[i*Size+j];
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+int main(int argc, char* argv[]) {
     double* pMatrix; // The matrix of the linear system
     double* pVector; // The right parts of the linear system
     double* pResult; // The result vector
@@ -248,7 +286,11 @@ void main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &ProcRank);
     if (ProcRank == 0)
         printf("Parallel Gauss algorithm for solving linear systems\n"); 
-
+    if (argc != 2){
+        printf("Usage:\n%s \"Size\"\n");
+        return 1;
+    }
+    Size = atoi(argv[1]);
     ProcessInitialization(pMatrix, pVector, pResult, pProcRows, pProcVector, pProcResult, Size, RowNum);
 
     //Distributing the initial data between the processes
@@ -258,14 +300,21 @@ void main(int argc, char* argv[]) {
         printf("Initial matrix \n");
         PrintMatrix(pMatrix, Size, Size);
     }
+    double timePar = 0;
+    if (ProcRank == 0) timePar = -MPI_Wtime();
     ParallelResultCalculation (pProcRows, pProcVector, pProcResult, Size,RowNum);
-    TestDistribution(pMatrix, pVector, pProcRows, pProcVector, Size, RowNum); 
-
+    if (ProcRank == 0) timePar += MPI_Wtime();
+    //TestDistribution(pMatrix, pVector, pProcRows, pProcVector, Size, RowNum); 
+    ResultCollection(pMatrix,pProcRows,Size,RowNum);
+    double Det;
+    if(ProcRank == 0) Det = DeterminantCalculation(pMatrix,Size);
     if (ProcRank == 0) {
-        printf("Initial matrix \n");
+        printf("Result matrix \n");
         PrintMatrix(pMatrix, Size, Size);
-        printf("Initial vector \n");
-        PrintVector(pVector, Size);
+        printf("Determinant = %f\n",Det);
+        //printf("Initial vector \n");
+        //PrintVector(pVector, Size);
+        printf("Parallel time: %f\n",timePar);
     } 
     ProcessTermination (pMatrix, pVector, pResult, pProcRows, pProcVector,pProcResult); 
     MPI_Finalize();
