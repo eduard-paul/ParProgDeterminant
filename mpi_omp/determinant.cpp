@@ -5,14 +5,10 @@
 
 const double EPS = 1.0e-10;
 
-int ProcNum = 0; // The number of the available processes
+int ProcNum = 0;  // The number of the available processes
 int ProcRank = 0; // The rank of the current process
-int* pProcInd;
-int* pProcNum; 
-int *pParallelPivotPos; // The number of rows selected as the pivot ones
-int *pProcPivotIter; // The number of iterations, at which the processor rows were used as the pivot ones 
-int* pSerialPivotPos;  // The number of pivot rows selected at the iterations 
-int* pSerialPivotIter; // The iterations, at which the rows were pivots 
+int *pProcPivotIter;    // The number of iterations, at which the processor rows were used as the pivot ones 
+int* pSerialPivotIter;  // The iterations, at which the rows were pivots 
 
 // Function for random initialization of the matrix and the vector elements
 void RandomDataInitialization(double* pMatrix, int Size) {
@@ -20,7 +16,7 @@ void RandomDataInitialization(double* pMatrix, int Size) {
     srand(unsigned(time(0)));
     for (i=0; i<Size; i++) {
         for (j=0; j<Size; j++) {
-                pMatrix[i*Size+j] = (double)rand()/RAND_MAX/5.5; 
+            pMatrix[i*Size+j] = (double)rand()/RAND_MAX/5.5; 
         }
     }
 } 
@@ -41,35 +37,30 @@ int FindPivotRow(double* pMatrix, int Size, int Iter) {
 } 
 
 void SerialColumnElimination (double* pMatrix, int Pivot,  int Iter, int Size) { 
-  double PivotValue, PivotFactor;  
-  PivotValue = pMatrix[Pivot*Size+Iter]; 
-  for (int i=0; i<Size; i++) { 
-    if (pSerialPivotIter[i] == -1) { 
-      PivotFactor = pMatrix[i*Size+Iter] / PivotValue; 
-      for (int j=Iter; j<Size; j++) { 
-        pMatrix[i*Size + j] -= PivotFactor * pMatrix[Pivot*Size+j]; 
-      }
-    } 
-  }   
+    double PivotValue, PivotFactor;  
+    PivotValue = pMatrix[Pivot*Size+Iter]; 
+    for (int i=0; i<Size; i++) { 
+        if (pSerialPivotIter[i] == -1) { 
+            PivotFactor = pMatrix[i*Size+Iter] / PivotValue; 
+            for (int j=Iter; j<Size; j++) { 
+                pMatrix[i*Size + j] -= PivotFactor * pMatrix[Pivot*Size+j]; 
+            }
+        } 
+    }   
 } 
 
 void SerialGaussianElimination(double* pMatrix,int Size) { 
-  int PivotRow;   // The Number of the current pivot row    
-      pSerialPivotPos  = new int [Size]; 
+    int PivotRow;   // The Number of the current pivot row  
     pSerialPivotIter = new int [Size]; 
     for (int i=0; i<Size; i++) { 
         pSerialPivotIter[i] = -1; 
     } 
-  for (int Iter=0; Iter<Size; Iter++) { 
-    // Finding the pivot row 
-    PivotRow = FindPivotRow(pMatrix, Size, Iter); 
-    pSerialPivotPos[Iter] = PivotRow; 
-    pSerialPivotIter[PivotRow] = Iter; 
-    SerialColumnElimination(pMatrix, PivotRow, Iter, Size); 
-  } 
-  //PrintMatrix(pMatrix, Size, Size); 
-      delete [] pSerialPivotPos; 
-    delete [] pSerialPivotIter; 
+    for (int Iter=0; Iter<Size; Iter++) { 
+        // Finding the pivot row 
+        PivotRow = FindPivotRow(pMatrix, Size, Iter); 
+        pSerialPivotIter[PivotRow] = Iter; 
+        SerialColumnElimination(pMatrix, PivotRow, Iter, Size); 
+    }
 } 
 
 // Function for memory allocation and data initialization
@@ -126,18 +117,7 @@ void DataDistribution(double* pMatrix, double* pProcRows, int Size, int RowNum) 
         pSendNum[ProcRank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     delete [] pSendNum;
-    delete [] pSendInd; 
-
-    pProcInd = new int [ProcNum];
-    pProcNum = new int [ProcNum];
-    RestRows = Size;
-    pProcInd[0] = 0;
-    pProcNum[0] = Size/ProcNum;
-    for (int i=1; i<ProcNum; i++) {
-        RestRows -= pProcNum[i-1];
-        pProcNum[i] = RestRows/(ProcNum-i);
-        pProcInd[i] = pProcInd[i-1]+pProcNum[i-1];
-    } 
+    delete [] pSendInd;     
 } 
 
 void PrintMatrix(double *pMatrix, int Size1, int Size2){
@@ -170,7 +150,6 @@ void ParallelGaussianElimination(double* pProcRows, int Size, int RowNum) {
     struct { double MaxValue; int ProcRank; } ProcPivot, Pivot;
     double *pPivotRow; // Pivot row of the current iteration
     pPivotRow = new double [Size]; 
-    pParallelPivotPos = new int [Size];
     pProcPivotIter = new int [RowNum];
     for (int i=0; i<RowNum; i++)
         pProcPivotIter[i] = -1;
@@ -195,10 +174,7 @@ void ParallelGaussianElimination(double* pProcRows, int Size, int RowNum) {
         // Storing the number of the pivot row
         if ( ProcRank == Pivot.ProcRank ){
             pProcPivotIter[PivotPos]= i;
-            pParallelPivotPos[i]= pProcInd[ProcRank] + PivotPos; 
         }
-        MPI_Bcast(&pParallelPivotPos[i], 1, MPI_INT, Pivot.ProcRank,
-            MPI_COMM_WORLD); 
         // Broadcasting the pivot row
         if ( ProcRank == Pivot.ProcRank ){
             // Fill the pivot row
@@ -206,37 +182,13 @@ void ParallelGaussianElimination(double* pProcRows, int Size, int RowNum) {
                 pPivotRow[j] = pProcRows[PivotPos*Size + j];
             }
         }
-        MPI_Bcast(pPivotRow, Size+1, MPI_DOUBLE, Pivot.ProcRank,
+        MPI_Bcast(pPivotRow, Size, MPI_DOUBLE, Pivot.ProcRank,
             MPI_COMM_WORLD);
         //Column elimination
         ParallelEliminateColumns(pProcRows, pPivotRow, Size, RowNum, i); 
     }
     delete [] pPivotRow; 
-    delete [] pParallelPivotPos;
-    delete [] pProcPivotIter;
-} 
-
-// Function for gathering the result matrix
-void ResultCollection(double* pMatrix, double* pProcRows, int Size, int RowNum) {
-    int *pSendNum = new int [ProcNum];
-    int *pSendInd = new int [ProcNum];
-    int RestRows=Size; 
-    RowNum = (Size/ProcNum);
-    pSendNum[0] = RowNum*Size;
-    pSendInd[0] = 0;
-    for (int i=1; i<ProcNum; i++) {
-        RestRows -= RowNum;
-        RowNum = RestRows/(ProcNum-i);
-        pSendNum[i] = RowNum*Size;
-        pSendInd[i] = pSendInd[i-1]+pSendNum[i-1];
-    }
-
-    MPI_Gatherv(pProcRows,pSendNum[ProcRank],MPI_DOUBLE,pMatrix,
-        pSendNum,pSendInd,MPI_DOUBLE,0,MPI_COMM_WORLD);
-
-    delete [] pSendNum;
-    delete [] pSendInd; 
-} 
+}  
 
 void QuickSort(int* a, int N, int &revers) {
 
@@ -260,40 +212,45 @@ void QuickSort(int* a, int N, int &revers) {
 
 double DeterminantCalculation(double *pMatrix, int Size){
     double result = 1;
-    int *arr = new int[Size];
     for(int i = 0; i<Size; i++){
-        for(int j=0;i<Size;j++){
-            if (fabs(pMatrix[i*Size+j])>EPS){
-                result *= pMatrix[i*Size+j];
-                arr[i] = j;
-                break;
-            }
-        }
+        result *= pMatrix[i*Size+pSerialPivotIter[i]];
     }
     int revers = 1;
-    QuickSort(arr,Size-1,revers);
+    QuickSort(pSerialPivotIter,Size-1,revers);
     result *= revers;
-    delete[] arr;
+    delete [] pSerialPivotIter;
     return result;
 }
 
-double ParallelDeterminantCalculation(double *pMatrix, int Size){
-    double result = 1;
-    int *arr = new int[Size];
-#pragma omp parallel for reduction(*:result)
-    for(int i = 0; i<Size; i++){
-        for(int j=0;i<Size;j++){
-            if (fabs(pMatrix[i*Size+j])>EPS){
-                result *= pMatrix[i*Size+j];
-                arr[i] = j;
-                break;
-            }
-        }
+double ParallelDeterminantCalculation(double *ProcRows, int RowNum, int Size){
+    double result = 0, prod = 1;
+#pragma omp parallel for reduction(*:prod)
+    for(int i = 0; i<RowNum; i++){
+        prod *= ProcRows[i*Size+pProcPivotIter[i]];
     }
+    MPI_Reduce(&prod,&result,1,MPI_DOUBLE,MPI_PROD,0,MPI_COMM_WORLD);
+
+    int *pParallelPivotIter = new int[Size];
+    int *displs = new int [ProcNum];
+    int *recvcounts = new int [ProcNum];
+    int RestRows = Size;
+    displs[0] = 0;
+    recvcounts[0] = Size/ProcNum;
+    for (int i=1; i<ProcNum; i++) {
+        RestRows -= recvcounts[i-1];
+        recvcounts[i] = RestRows/(ProcNum-i);
+        displs[i] = displs[i-1]+recvcounts[i-1];
+    }
+    MPI_Gatherv(pProcPivotIter,RowNum,MPI_INT,pParallelPivotIter,recvcounts,displs,MPI_INT,0,MPI_COMM_WORLD);
+
     int revers = 1;
-    QuickSort(arr,Size-1,revers);
+    if (ProcRank == 0)
+        QuickSort(pParallelPivotIter,Size-1,revers);
     result *= revers;
-    delete[] arr;
+
+    delete [] pParallelPivotIter;
+    delete [] recvcounts;
+    delete [] displs;
     return result;
 }
 
@@ -325,22 +282,23 @@ int main(int argc, char* argv[]) {
     if (ProcRank == 0) timePar = -MPI_Wtime();
 
     DataDistribution(Matrix, ProcRows, Size, RowNum);  
-    ParallelGaussianElimination(ProcRows,Size,RowNum);    
-    ResultCollection(ParResMatrix,ProcRows,Size,RowNum);
+    ParallelGaussianElimination(ProcRows,Size,RowNum);   
+
+    double parDet = ParallelDeterminantCalculation(ProcRows,RowNum, Size);
 
     if(ProcRank == 0) {
-        double parDet = ParallelDeterminantCalculation(ParResMatrix,Size);
+
         timePar += MPI_Wtime();
 
         std::cout<<"Parallel time: "<<timePar<<std::endl;
 
         timeSer = -MPI_Wtime();
         SerialGaussianElimination(Matrix,Size);
-
         double serDet = DeterminantCalculation(Matrix,Size);
         timeSer += MPI_Wtime();
-        
+
         std::cout<<"Serial time: "<<timeSer<<std::endl;
+        std::cout<<"Det = "<<parDet<<std::endl;
 
         if (fabs(serDet-parDet)>fabs(serDet*EPS)){
             std::cout<<"Wrong result!";
